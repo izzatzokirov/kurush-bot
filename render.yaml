@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: kurush-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        value: 8450359350:AAGWBUTpHyjH_piewfg4RnATqT8coacyzhw
+      - key: ADMIN_ID
+        value: 8488537910
+    autoDeploy: true
