@@ -1,133 +1,82 @@
-import logging
+import asyncio, logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-import asyncio
+from aiohttp import web
 
 TOKEN = "8483499301:AAG5278KznSFJnOIRcA-xnDps4GTxaD2uOI"
-ADMIN_ID = 8488537910 
+ADMIN = 8488537910
+bot, dp = Bot(TOKEN), Dispatcher()
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+class Form(StatesGroup): r_issue = State(); r_model = State(); r_photo = State(); s_name = State(); s_phone = State()
 
-class Form(StatesGroup):
-    radio_issue = State()
-    radio_model = State()
-    radio_photo = State()
-    service_type = State()
-    client_name = State()
-    client_phone = State()
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+async def h(r): return web.Response(text="OK")
+async def ws():
+    a = web.Application(); a.router.add_get("/", h)
+    runner = web.AppRunner(a); await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", 10000).start()
 
-# --- КРАСИВЫЕ КЛАВИАТУРЫ ---
-def main_menu():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="📻 Техподдержка Радио", callback_data="radio_hub"))
-    builder.row(types.InlineKeyboardButton(text="💎 Заказать услуги Digital", callback_data="service_hub"))
-    return builder.as_markup()
+# --- КНОПКИ ---
+def kb(btns):
+    b = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text=t, callback_data=c)] for t, c in btns])
+    return b
 
-def radio_menu():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🔇 Нет звука", callback_data="err_no_sound"))
-    builder.row(types.InlineKeyboardButton(text="📱 Приложение вылетает", callback_data="err_crash"))
-    builder.row(types.InlineKeyboardButton(text="✍️ Другая проблема", callback_data="err_other"))
-    builder.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main"))
-    return builder.as_markup()
-
-def service_menu():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🌐 Создание сайта", callback_data="ser_site"))
-    builder.row(types.InlineKeyboardButton(text="🎨 Логотип / Брендинг", callback_data="ser_logo"))
-    builder.row(types.InlineKeyboardButton(text="🤖 Telegram бот", callback_data="ser_bot"))
-    builder.row(types.InlineKeyboardButton(text="📞 Заказать звонок", callback_data="ser_call"))
-    builder.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main"))
-    return builder.as_markup()
-
-# --- ОБРАБОТКА КОМАНД ---
+# --- ЛОГИКА ---
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(text="📖 Что умеет бот?", callback_data="about_bot"))
-    
-    await message.answer(
-        f"👋 Приветствую, {message.from_user.first_name}!\n\n"
-        "Вы попали в **Kurush Digital**. Мы создаем цифровые решения и поддерживаем лучшие проекты страны.",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+async def st(m: types.Message):
+    await m.answer(f"👋 Привет, {m.from_user.first_name}!\nЯ бот **Kurush Digital**.", reply_markup=kb([("📖 Что умею?", "about")]))
 
-@dp.callback_query(F.data == "about_bot")
-async def about_bot(callback: types.CallbackQuery):
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(text="🚀 Начать работу", callback_data="back_main"))
-    
-    await callback.message.edit_text(
-        "✨ **Возможности Kurush Bot:**\n\n"
-        "✅ Помощь слушателям Isfara FM\n"
-        "✅ Прием заявок на разработку сайтов\n"
-        "✅ Быстрая связь с разработчиком\n"
-        "✅ Отправка скриншотов ошибок",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+@dp.callback_query(F.data == "about")
+async def ab(c: types.CallbackQuery):
+    await c.message.edit_text("🚀 **Я помогаю:**\n1. Сообщить об ошибке радио.\n2. Заказать сайт/бота.", reply_markup=kb([("🎯 Начать", "main")]))
 
-@dp.callback_query(F.data == "back_main")
-async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "main")
+async def mn(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("Выберите нужный раздел:", reply_markup=main_menu())
+    await c.message.edit_text("Выберите раздел:", reply_markup=kb([("📻 Радио", "r_hub"), ("💻 Услуги", "s_hub")]))
 
-# --- ВЕТКА РАДИО ---
-@dp.callback_query(F.data == "radio_hub")
-async def radio_hub(callback: types.CallbackQuery):
-    await callback.message.edit_text("Что именно случилось? Выберите вариант или опишите сами:", reply_markup=radio_menu())
+# Ветка Радио
+@dp.callback_query(F.data == "r_hub")
+async def rh(c: types.CallbackQuery):
+    await c.message.edit_text("Что случилось?", reply_markup=kb([("🔇 Нет звука", "e1"), ("📱 Вылетает", "e2"), ("❓ Другое", "e3")]))
 
-@dp.callback_query(F.data.startswith("err_"))
-async def process_radio_error(callback: types.CallbackQuery, state: FSMContext):
-    issue = callback.data
-    await state.update_data(radio_issue=issue)
-    await state.set_state(Form.radio_model)
-    await callback.message.edit_text("Пожалуйста, напишите модель вашего телефона (например, Samsung A52 или iPhone 13):")
+@dp.callback_query(F.data.startswith("e"))
+async def re(c: types.CallbackQuery, state: FSMContext):
+    await state.set_state(Form.r_model); await c.message.edit_text("Ваша модель телефона?")
 
-@dp.message(Form.radio_model)
-async def process_model(message: types.Message, state: FSMContext):
-    await state.update_data(radio_model=message.text)
-    await state.set_state(Form.radio_photo)
-    await message.answer("Почти готово! Пришлите скриншот ошибки (как фото):")
+@dp.message(Form.r_model)
+async def rm(m: types.Message, state: FSMContext):
+    await state.set_state(Form.r_photo); await m.answer("Пришлите скриншот ошибки:")
 
-@dp.message(Form.radio_photo, F.photo)
-async def process_photo(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    photo_id = message.photo[-1].file_id
-    await bot.send_photo(ADMIN_ID, photo_id, caption=f"🆘 **ОШИБКА РАДИО**\nОт: @{message.from_user.username}\nТип: {data['radio_issue']}\nМодель: {data['radio_model']}")
-    await message.answer("✅ Сообщение отправлено! Мы разберемся.", reply_markup=main_menu())
+@dp.message(Form.r_photo, F.photo)
+async def rp(m: types.Message, state: FSMContext):
+    await bot.send_photo(ADMIN, m.photo[-1].file_id, caption=f"🆘 Радио: @{m.from_user.username}\nМодель: {m.text}")
+    await m.answer("✅ Отправлено!", reply_markup=kb([("⬅️ Меню", "main")]))
     await state.clear()
 
-# --- ВЕТКА УСЛУГ ---
-@dp.callback_query(F.data == "service_hub")
-async def service_hub(callback: types.CallbackQuery):
-    await callback.message.edit_text("Какие услуги вас интересуют?", reply_markup=service_menu())
+# Ветка Услуг
+@dp.callback_query(F.data == "s_hub")
+async def sh(c: types.CallbackQuery):
+    await c.message.edit_text("Что создадим?", reply_markup=kb([("🌐 Сайт", "s1"), ("🎨 Лого", "s2"), ("📞 Заказать звонок", "s_call")]))
 
-@dp.callback_query(F.data == "ser_call")
-async def service_call(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(Form.client_name)
-    await callback.message.edit_text("Введите ваше имя:")
+@dp.callback_query(F.data == "s_call")
+async def sc(c: types.CallbackQuery, state: FSMContext):
+    await state.set_state(Form.s_name); await c.message.edit_text("Ваше имя?")
 
-@dp.message(Form.client_name)
-async def process_client_name(message: types.Message, state: FSMContext):
-    await state.update_data(client_name=message.text)
-    await state.set_state(Form.client_phone)
-    await message.answer("Введите ваш номер телефона для связи:")
+@dp.message(Form.s_name)
+async def sn(m: types.Message, state: FSMContext):
+    await state.set_state(Form.s_phone); await m.answer("Ваш номер телефона?")
 
-@dp.message(Form.client_phone)
-async def process_client_phone(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    await bot.send_message(ADMIN_ID, f"💼 **НОВЫЙ ЗАКАЗ**\nИмя: {data['client_name']}\nТел: {message.text}\nОт: @{message.from_user.username}")
-    await message.answer("📲 Спасибо! Мы свяжемся с вами в ближайшее время.", reply_markup=main_menu())
+@dp.message(Form.s_phone)
+async def sp(m: types.Message, state: FSMContext):
+    await bot.send_message(ADMIN, f"💼 Заказ: @{m.from_user.username}\nИмя: {m.text}")
+    await m.answer("✅ Ждите звонка!", reply_markup=kb([("⬅️ Меню", "main")]))
     await state.clear()
 
-async def main():
+async def start():
+    asyncio.create_task(ws())
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == "__main__": asyncio.run(start())
